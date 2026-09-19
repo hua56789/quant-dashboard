@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>量化分析仪表盘</title>
+<script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/typescript@5.2.2/lib/typescript.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+*{box-sizing:border-box}
+body {background:#0f172a;color:#e2e8f0;margin:0;padding:8px;min-height:100vh}
+.chart-wrap{width:100%;height:100%}
+.scroll-event{white-space:nowrap;overflow:hidden}
+.scroll-event>div{animation:scroll 25s linear infinite}
+.scroll-event:hover>div{animation-play-state:paused;}
+@keyframes scroll{0%{transform:translateX(100%)}100%{transform:translateX(-100%)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/typescript">
+const {useState,useEffect,useRef} = React;
+
+// 注册深色主题
+const darkTheme = {
+  backgroundColor:'transparent',
+  textStyle:{color:'#cbd5e1'},
+  axisLine:{lineStyle:{color:'#475569'}},
+  splitLine:{lineStyle:{color:'#1e293b'}},
+  tooltip:{backgroundColor:'#1e293b',borderColor:'#475569'}
+}
+echarts.registerTheme('darkTheme', darkTheme);
+
+// 模拟分时数据
+const mockTimeShare = Array.from({length:240},(_,i)=>({
+  time:`${9+Math.floor(i/60)}:${String(i%60).padStart(2,'0')}`,
+  price:100 + Math.sin(i/12)*3 + (Math.random()-0.5)*0.6,
+  vol:Math.floor(Math.random()*1200)
+}))
+
+// 模拟K线数据，附带买卖信号
+const mockKline = Array.from({length:90},(_,i)=>{
+  const base = 100 + Math.sin(i/14)*6
+  const o = base + (Math.random()-0.5)*2
+  const c = base + (Math.random()-0.5)*2
+  const h = Math.max(o,c)+Math.random()*1.8
+  const l = Math.min(o,c)-Math.random()*1.8
+  const isBuy = i%17===0
+  const isSell = i%23===0
+  return {
+    date:`2025-${String((i%12)+1).padStart(2,'0')}-${String((i%28)+1).padStart(2,'0')}`,
+    open:o,close:c,high:h,low:l,vol:Math.floor(Math.random()*2500),
+    signal:isBuy?'BUY':isSell?'SELL':null
+  }
+})
+
+const events = ["【财经】央行公开市场操作 | 【行业】储能板块政策落地 | 【财报】龙头企业业绩预告 | 【宏观】PMI数据公布 | 【资金】北向资金净流入"]
+
+// 分时图组件
+function TimeShareChart(){
+  const ref = useRef(null)
+  useEffect(()=>{
+    if(!ref.current) return
+    const chart = echarts.init(ref.current,'darkTheme')
+    const opt = {
+      tooltip:{trigger:'axis'},
+      grid:{left:40,right:20,top:30,bottom:40},
+      xAxis:{type:'category',data:mockTimeShare.map(d=>d.time),axisLabel:{show:false}},
+      yAxis:[{scale:true},{gridIndex:1,scale:true}],
+      series:[
+        {
+          type:'line',data:mockTimeShare.map(d=>d.price),smooth:true,lineStyle:{width:2},
+          itemStyle:{color:'#38bdf8'},
+          areaStyle:{color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:'rgba(56,189,248,0.3)'},{offset:1,color:'rgba(56,189,248,0)'}]}}
+        },
+        {type:'bar',xAxisIndex:0,yAxisIndex:1,data:mockTimeShare.map(d=>d.vol),barWidth:3,itemStyle:{color:'#64748b'}}
+      ]
+    }
+    chart.setOption(opt)
+    return ()=>chart.dispose()
+  },[])
+  return <div ref={ref} className="chart-wrap h-full"/>
+}
+
+// K线回测动画组件
+function KlineChart({play}){
+  const ref = useRef(null)
+  const [idx,setIdx] = useState(30)
+  useEffect(()=>{
+    if(!ref.current) return
+    const chart = echarts.init(ref.current,'darkTheme')
+    const data = mockKline.slice(0,idx).map(d=>[d.open,d.close,d.low,d.high])
+    const marks = mockKline.slice(0,idx).filter(d=>d.signal).map((d)=>{
+      const pos = mockKline.findIndex(x=>x.date===d.date)
+      return {
+        xAxis:pos,
+        yAxis:d.signal==='BUY'?d.low-1.2:d.high+1.2,
+        symbol:d.signal==='BUY'?'arrow':'pin',
+        symbolSize:16,
+        itemStyle:{color:d.signal==='BUY'?'#22c55e':'#ef4444'},
+        label:{show:true,formatter:d.signal,fontSize:10}
+      }
+    })
+    const opt = {
+      tooltip:{trigger:'axis'},
+      grid:{left:40,right:40,top:30,bottom:40},
+      xAxis:{type:'category',data:mockKline.slice(0,idx).map(d=>d.date),axisLabel:{rotate:30,fontSize:10}},
+      yAxis:{scale:true},
+      series:[{type:'candlestick',data,markPoint:{data:marks}}]
+    }
+    chart.setOption(opt)
+    return ()=>chart.dispose()
+  },[idx])
+  useEffect(()=>{
+    if(!play) return
+    const timer = setInterval(()=>setIdx(p=>Math.min(p+1,mockKline.length)),350)
+    return ()=>clearInterval(timer)
+  },[play])
+  return <div ref={ref} className="chart-wrap h-full"/>
+}
+
+function App(){
+  const [stockCode,setStockCode] = useState('600010')
+  const [capital,setCapital] = useState(100000)
+  const [winRate,setWinRate] = useState(62)
+  const [odds,setOdds] = useState(1.8)
+  const [risk,setRisk] = useState(2.4)
+  const [position,setPosition] = useState(35)
+  const [play,setPlay] = useState(false)
+  const [log,setLog] = useState<string[]>(["系统就绪","等待选股策略生成"])
+  const [longCount,setLongCount] = useState(52)
+  const [shortCount,setShortCount] = useState(38)
+  const [showReport,setShowReport] = useState(false)
+  const [loading,setLoading] = useState(false)
+
+  function runStrategy(){
+    if(!stockCode){
+      setLog(p=>[...p,"> 错误：请输入股票代码"])
+      return
+    }
+    setLoading(true)
+    setLog(p=>[...p,`> 开始选股 ${stockCode}`,"> AI策略生成中..."])
+    setLongCount(Math.floor(Math.random()*30+40))
+    setShortCount(Math.floor(Math.random()*30+25))
+    setTimeout(()=>{
+      setLog(p=>[...p,"> 回测运算完成","> ✅ 策略校验通过"])
+      setLoading(false)
+    },1200)
+  }
+
+  return <div className="max-w-[1600px] mx-auto">
+    <h1 className="text-3xl font-bold text-center mb-3 text-sky-300">量化分析仪表盘</h1>
+    {/* 第一行：分时图 + 指标面板 */}
+    <div className="grid grid-cols-12 gap-3 mb-3">
+      <div className="col-span-12 lg:col-span-8 bg-slate-800 p-2 rounded-lg">
+        <div className="scroll-event bg-slate-900 p-1 rounded mb-2"><div>{events.join(" ")}</div></div>
+        <div className="h-64"><TimeShareChart/></div>
+      </div>
+      <div className="col-span-12 lg:col-span-4 bg-slate-800 p-3 rounded-lg">
+        <h3 className="text-lg font-semibold mb-2">量化信号指标</h3>
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between"><span>成交量</span><span className="text-sky-300">112.6万手</span></div>
+          <div className="flex justify-between"><span>策略评分</span><span className="text-green-400">78</span></div>
+          <div className="flex justify-between"><span>胜率</span><span className="text-green-400">{winRate}%</span></div>
+          <div className="flex justify-between"><span>盈亏比</span><span className="text-amber-300">{odds}</span></div>
+          <div className="flex justify-between"><span>风险系数</span><span className="text-red-400">{risk}</span></div>
+          <div className="flex justify-between"><span>建议仓位</span><span className="text-sky-300">{position}%</span></div>
+        </div>
+      </div>
+    </div>
+    {/* 第二行：策略引擎 + 日志多空面板 */}
+    <div className="grid grid-cols-12 gap-3 mb-3">
+      <div className="col-span-12 lg:col-span-8 bg-slate-800 p-3 rounded-lg">
+        <h3 className="text-lg font-semibold mb-2">策略生成引擎</h3>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <div>
+            <label className="text-sm block">股票代码</label>
+            <input className="w-full bg-slate-900 border border-slate-600 rounded p-2" value={stockCode} onChange={e=>setStockCode(e.target.value)}/>
+          </div>
+          <div>
+            <label className="text-sm block">初始资金</label>
+            <input className="w-full bg-slate-900 border border-slate-600 rounded p-2" value={capital} onChange={e=>setCapital(Number(e.target.value))}/>
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={runStrategy} disabled={loading} className="bg-sky-600 px-3 py-2 rounded disabled:opacity-60">
+            {loading?"运算中...":"AI生成策略"}
+          </button>
+          <button onClick={()=>setShowReport(true)} className="bg-emerald-600 px-3 py-2 rounded">多策略对比 & 回测报告</button>
+        </div>
+        {showReport && <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-10" onClick={()=>setShowReport(false)}>
+          <div className="bg-slate-800 p-4 rounded-lg w-[90%] max-w-lg max-h-[80vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+            <h2 className="text-xl mb-2">回测报告</h2>
+            <p>总收益：+24.7% | 最大回撤：8.3%</p>
+            <p>交易次数：112 | 盈利次数：69</p>
+            <p>夏普比率：1.42</p>
+            <p>年化波动率：14.6%</p>
+            <p>盈亏比均值：1.81</p>
+            <button onClick={()=>setShowReport(false)} className="mt-3 bg-slate-600 px-3 py-1 rounded">关闭</button>
+          </div>
+        </div>}
+      </div>
+      <div className="col-span-12 lg:col-span-4 bg-slate-800 p-3 rounded-lg">
+        <h3 className="text-lg font-semibold mb-2">日志流 & 多空机会</h3>
+        <div className="flex justify-between mb-2">
+          <div className="text-green-400">上涨天数：{longCount}</div>
+          <div className="text-red-400">下跌天数：{shortCount}</div>
+        </div>
+        <div className="bg-slate-900 p-2 rounded h-44 overflow-auto text-xs font-mono">
+          {log.map((l,i)=><div key={i}>{l}</div>)}
+        </div>
+      </div>
+    </div>
+    {/* 第三行：全宽K线 */}
+    <div className="bg-slate-800 p-3 rounded-lg">
+      <div className="flex justify-between items-center mb-2">
+        <h3 className="text-lg font-semibold">日线K线回测图</h3>
+        <button onClick={()=>setPlay(!play)} className="bg-amber-600 px-3 py-1 rounded">{play?"暂停播放":"动画播放"}</button>
+      </div>
+      <div className="h-80"><KlineChart play={play}/></div>
+    </div>
+  </div>
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>)
+</script>
+</body>
+</html>
